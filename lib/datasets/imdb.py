@@ -21,7 +21,8 @@ class imdb(object):
         self._num_classes = 0
         self._classes = []
         self._image_index = []
-        self._obj_proposer = 'selective_search'
+        # self._obj_proposer = 'selective_search'
+        self._obj_proposer = 'edgeboxes'
         self._roidb = None
         self._roidb_handler = self.default_roidb
         # Use this dict for storing dataset specific config options
@@ -86,7 +87,6 @@ class imdb(object):
         Each list element is a list of length number-of-images.
         Each of those list elements is either an empty list []
         or a numpy array of detection.
-
         all_boxes[class][image] = [] or np.array of shape #dets x 5
         """
         raise NotImplementedError
@@ -155,15 +155,21 @@ class imdb(object):
                 'Number of boxes must match number of ground-truth images'
         roidb = []
         for i in xrange(self.num_images):
+
             boxes = box_list[i]
+            if boxes is None:
+                roidb.append(None)
+                continue
+
             num_boxes = boxes.shape[0]
             overlaps = np.zeros((num_boxes, self.num_classes), dtype=np.float32)
 
-            if gt_roidb is not None:
+            if gt_roidb[i] is not None:
                 gt_boxes = gt_roidb[i]['boxes']
                 gt_classes = gt_roidb[i]['gt_classes']
                 gt_overlaps = bbox_overlaps(boxes.astype(np.float),
-                                            gt_boxes.astype(np.float))
+                                        gt_boxes.astype(np.float))
+
                 argmaxes = gt_overlaps.argmax(axis=1)
                 maxes = gt_overlaps.max(axis=1)
                 I = np.where(maxes > 0)[0]
@@ -181,6 +187,19 @@ class imdb(object):
     def merge_roidbs(a, b):
         assert len(a) == len(b)
         for i in xrange(len(a)):
+
+            if not a[i] and b[i]:
+                a[i] = b[i]
+                continue
+
+            elif a[i] and not b[i]:
+                continue
+
+            # an image must at least have either gt boxes or proposals
+            elif not a[i] and not b[i]:
+                print('Error: a[i] and b[i] are both None!')
+                print('i=' + str(i))
+
             a[i]['boxes'] = np.vstack((a[i]['boxes'], b[i]['boxes']))
             a[i]['gt_classes'] = np.hstack((a[i]['gt_classes'],
                                             b[i]['gt_classes']))

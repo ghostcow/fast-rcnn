@@ -5,12 +5,18 @@
 # Written by Ross Girshick
 # --------------------------------------------------------
 
-from .imdb import imdb
-from .pascal_voc import pascal_voc
-from . import factory
-
+import sys
 import os.path as osp
 ROOT_DIR = osp.join(osp.dirname(__file__), '..', '..')
+
+COCO_API_DIR = osp.abspath(osp.join(ROOT_DIR,'data','coco','PythonAPI'))
+sys.path.append(COCO_API_DIR)
+
+from .imdb import imdb
+from .pascal_voc import pascal_voc
+from .imagenet import imagenet
+from .coco import coco
+from . import factory
 
 # We assume your matlab binary is in your path and called `matlab'.
 # If either is not true, just add it to your path and alias it as matlab, or

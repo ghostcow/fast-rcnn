@@ -247,6 +247,8 @@ def apply_nms(all_boxes, thresh):
 
 def test_net(net, imdb):
     """Test a Fast R-CNN network on an image database."""
+    roidb = imdb.roidb
+    # get number of images only after roidb getter cleans image list
     num_images = len(imdb.image_index)
     # heuristic: keep an average of 40 detections per class per images prior
     # to NMS
@@ -272,7 +274,6 @@ def test_net(net, imdb):
     # timers
     _t = {'im_detect' : Timer(), 'misc' : Timer()}
 
-    roidb = imdb.roidb
     for i in xrange(num_images):
         im = cv2.imread(imdb.image_path_at(i))
         _t['im_detect'].tic()

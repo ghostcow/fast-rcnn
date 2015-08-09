@@ -19,6 +19,7 @@ def prepare_roidb(imdb):
     recorded.
     """
     roidb = imdb.roidb
+    print('Preparing {} roidb of size {}'.format(imdb.name, len(imdb.image_index)))
     for i in xrange(len(imdb.image_index)):
         roidb[i]['image'] = imdb.image_path_at(i)
         # need gt_overlaps as a dense array for argmax
@@ -42,6 +43,9 @@ def add_bbox_regression_targets(roidb):
     assert len(roidb) > 0
     assert 'max_classes' in roidb[0], 'Did you call prepare_roidb first?'
 
+    # for debug
+    np.seterr(invalid='raise')
+
     num_images = len(roidb)
     # Infer number of classes from the number of columns in gt_overlaps
     num_classes = roidb[0]['gt_overlaps'].shape[1]
@@ -49,8 +53,16 @@ def add_bbox_regression_targets(roidb):
         rois = roidb[im_i]['boxes']
         max_overlaps = roidb[im_i]['max_overlaps']
         max_classes = roidb[im_i]['max_classes']
-        roidb[im_i]['bbox_targets'] = \
-                _compute_targets(rois, max_overlaps, max_classes)
+        try:
+            roidb[im_i]['bbox_targets'] = \
+                    _compute_targets(rois, max_overlaps, max_classes)
+        except:
+            print('im_i=', im_i)
+            print('image=' + roidb[im_i]['image'])
+            print('rois=',rois)
+            print('max_overlaps=', max_overlaps)
+            print('max_classes=', max_classes)
+            raise
 
     # Compute values needed for means and stds
     # var(x) = E(x^2) - E(x)^2
@@ -113,8 +125,24 @@ def _compute_targets(rois, overlaps, labels):
 
     targets_dx = (gt_ctr_x - ex_ctr_x) / ex_widths
     targets_dy = (gt_ctr_y - ex_ctr_y) / ex_heights
-    targets_dw = np.log(gt_widths / ex_widths)
-    targets_dh = np.log(gt_heights / ex_heights)
+
+    try:
+        targets_dw = np.log(gt_widths / ex_widths)
+    except Exception, e:
+        print(e)
+        print('gt_widths: ', gt_widths)
+        print('ex_widths: ', ex_widths)
+        print('ex_rois size: ', np.array(ex_rois).shape)
+        print('ex_rois: ', ex_rois)
+        raise
+
+    try:
+        targets_dh = np.log(gt_heights / ex_heights)
+    except Exception, e:
+        print(e)
+        print('gt_heights: ', gt_heights)
+        print('ex_heights: ', ex_heights)
+        raise
 
     targets = np.zeros((rois.shape[0], 5), dtype=np.float32)
     targets[ex_inds, 0] = labels[ex_inds]

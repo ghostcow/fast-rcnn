@@ -23,6 +23,7 @@ import numpy as np
 import scipy.io as sio
 import caffe, os, sys, cv2
 import argparse
+import time
 
 CLASSES = ('__background__',
            'aeroplane', 'bicycle', 'bird', 'boat',
@@ -143,11 +144,24 @@ if __name__ == '__main__':
     print '\n\nLoaded network {:s}'.format(caffemodel)
 
     print '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~'
-    print 'Demo for data/demo/000004.jpg'
-    demo(net, '000004', ('car',))
+    print 'Demo for data/demo/test_001.jpg'
+    #print 'Demo for data/demo/000004.jpg'
+    #demo(net, '000004', ('car',))
 
-    print '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~'
-    print 'Demo for data/demo/001551.jpg'
-    demo(net, '001551', ('sofa', 'tvmonitor'))
+    pics = ['test_001', 'test_002', 'test_003', 'test_004']
 
-    plt.show()
+    for p in pics:
+        demo(net, p, ('aeroplane', 'bicycle', 'bird', 'boat',
+               'bottle', 'bus', 'car', 'cat', 'chair',
+               'cow', 'diningtable', 'dog', 'horse',
+               'motorbike', 'person', 'pottedplant',
+               'sheep', 'sofa', 'train', 'tvmonitor'))
+        plt.show()
+        #time.sleep(3)
+
+
+    # print '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~'
+    # print 'Demo for data/demo/001551.jpg'
+    # demo(net, '001551', ('sofa', 'tvmonitor'))
+
+#    plt.show()
