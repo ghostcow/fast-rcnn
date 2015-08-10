@@ -17,7 +17,10 @@ import utils.cython_bbox
 import cPickle
 import subprocess
 import h5py
+import json
 from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
+
 
 class coco(datasets.imdb):
     def __init__(self, image_set, year, devkit_path=None):
@@ -26,6 +29,7 @@ class coco(datasets.imdb):
         self._year = year
         # image_set for coco is 'train', 'val' or 'test'
         self._image_set = image_set
+        self._image_set_year = image_set + year
         self._devkit_path = self._get_default_path() if devkit_path is None \
                             else devkit_path
         self._data_path = os.path.join(self._devkit_path, 'images')
@@ -81,7 +85,7 @@ class coco(datasets.imdb):
         """
         # coco/annotations/instances_train2014.json
         filename = os.path.join(self._devkit_path, 'annotations',
-                                'instances_' + self._image_set + '.json')
+                                'instances_' + self._image_set_year + '.json')
         assert os.path.exists(filename)
         return COCO(filename)
 
@@ -131,7 +135,7 @@ class coco(datasets.imdb):
         """
         Return the path where the train\val\test image set is (Ex: train2014)
         """
-        return os.path.join(self._data_path, self._image_set + self._year)
+        return os.path.join(self._data_path, self._image_set_year)
 
     def gt_roidb(self):
         """
@@ -191,7 +195,8 @@ class coco(datasets.imdb):
             with open(cache_file, 'rb') as fid:
 
                 roidb, bad_indices = cPickle.load(fid)
-                print("{} loaded clean roidb from {}.\nCleaning image list...".format(self._name, cache_file))
+                print("{} loaded clean roidb from {}.\nCleaning image list..."
+                      .format(self._name, cache_file))
                 self._clean_list(self._image_index, bad_indices)
             return roidb
 
@@ -244,7 +249,7 @@ class coco(datasets.imdb):
         Load image and bounding boxes info from JSON file in the MSCOCO
         format.
 
-        ONLY NEED bbox indices and class indices from annotation object
+        Bboxes are 0-indexed already
         """
         img_id = self._image_to_id[image_path]
         ann_id = self._annotations.getAnnIds(img_id)
@@ -259,15 +264,10 @@ class coco(datasets.imdb):
         overlaps = np.zeros((num_objs, self.num_classes), dtype=np.float32)
 
         for ix, ann in enumerate(anns):
-            x = ann['bbox'][0]
-            y = ann['bbox'][1]
-            width = ann['bbox'][2]
-            height = ann['bbox'][3]
+            bb = ann['bbox']
             # convert (xmax,ymax,width,height) to (xmin,ymin,xmax,ymax)
-            x1 = x
-            y1 = y
-            x2 = x + width - 1
-            y2 = y + height - 1
+            x, y, width, height = [bb[0], bb[1], bb[2], bb[3]]
+            x1, y1, x2, y2 = [x, y, x+width-1, y+height-1]
             cls = self._cat_id_to_class_index[ann['category_id']]
             boxes[ix, :] = [x1, y1, x2, y2]
             gt_classes[ix] = cls
@@ -280,64 +280,67 @@ class coco(datasets.imdb):
                 'gt_overlaps' : overlaps,
                 'flipped' : False}
 
-    # TODO: write evaluation functions
-    def _write_voc_results_file(self, all_boxes):
+    def _write_coco_results_file(self, all_boxes):
+        """
+        Results must be written to file in JSON format.
+        one dict per instance:
+        [{
+            "image_id" : int,
+            "category_id" : int,
+            "bbox : [x,y,width,height],
+            "score" : float,
+        }]
+        :param all_boxes:
+        :return:
+        """
         use_salt = self.config['use_salt']
-        prefix = ''
+        prefix = 'instances_'
         if use_salt:
             prefix += '{}_'.format(os.getpid())
 
-        print('Building reverse lookup table for ' + self._image_set + ' set')
-        full_img_list = self._load_image_set_index()
-        index = dict( zip(full_img_list, xrange(len(full_img_list))) )
-
-        # ILSVRC2014_devkit/results/44503_det_test_aeroplane.txt
         path = os.path.abspath(os.path.join(self._devkit_path, 'results',
                                             prefix))
 
-        filename = path + 'det_' + self._image_set + '_results.txt'
+        filename = path + self._image_set_year + '_results.json'
         print 'Writing results to file: {}'.format(filename)
+        results = []
         with open(filename, 'wt') as f:
             for im_ind, image_name in enumerate(self.image_index):
                 for cls_ind, cls in enumerate(self.classes):
+
                     if cls == '__background__':
                         continue
                     dets = all_boxes[cls_ind][im_ind]
                     if dets == []:
                         continue
-                    # the VOCdevkit expects 1-based indices (does the ilsvrc expect 1-based indices??)
+
+                    image_id = self._image_to_id[image_name]
+                    cat_id = self._annotations.getCatIds(cls)
                     for k in xrange(dets.shape[0]):
-                        # f.write('{:s} {:.3f} {:.1f} {:.1f} {:.1f} {:.1f}\n'.
-                        f.write('{:d} {:d} {:.6f} {:.6f} {:.6f} {:.6f} {:.6f}\n'.
-                                format(index[image_name] + 1,
-                                       cls_ind, dets[k, -1],
-                                       dets[k, 0] + 1, dets[k, 1] + 1,
-                                       dets[k, 2] + 1, dets[k, 3] + 1))
+                        x1,y1,x2,y2 = [dets[k, 0], dets[k, 1],
+                                       dets[k, 2], dets[k, 3]]
+                        x,y,width,height = [x1, y1, x2-x1+1, y2-y1+1]
+                        bbox = [x, y, width, height]
+                        score = dets[k, -1]
+                        res = {'image_id' : image_id,
+                               'category_id' : cat_id,
+                               'bbox' : bbox,
+                               'score' : score}
+                        results.append(res)
+            json.dump(results,f)
         return filename
 
-    def _do_matlab_eval(self, filename): # prefix, output_dir='output'):
-        # rm_results = self.config['cleanup']
-
-        cache_filename = self._name + '_evaluation_cache.mat'
-        cache_filepath = os.path.join(self.cache_path, cache_filename)
-
-        gt_dir = os.path.join(self._data_path, 'bbox', self._image_set)
-
-        path = os.path.join(self._devkit_path, 'evaluation')
-        cmd = 'cd {} && '.format(path)
-        cmd += '{:s} -nodisplay -nodesktop '.format(datasets.MATLAB)
-        cmd += '-r "dbstop if error; '
-        # cmd += 'voc_eval(\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',{:d}); quit;"' \
-               # .format(self._devkit_path, prefix,
-               #         self._image_set, output_dir, int(rm_results))
-        cmd += 'evaluate_frcn(\'{:s}\', \'{:s}\', \'{:s}\'); quit;"' \
-                .format(filename, gt_dir, cache_filepath)
-        print('Running:\n{}'.format(cmd))
-        status = subprocess.call(cmd, shell=True)
-
     def evaluate_detections(self, all_boxes, output_dir=None):
-        filename = self._write_voc_results_file(all_boxes)
-        self._do_matlab_eval(filename) #, output_dir)
+        resFile = self._write_coco_results_file(all_boxes)
+        cocoGt = self._annotations
+        cocoDt = cocoGt.loadRes(resFile)
+        # running evaluation
+        cocoEval = COCOeval(cocoGt,cocoDt)
+        # useSegm should default to 0
+        #cocoEval.params.useSegm = 0
+        cocoEval.evaluate()
+        cocoEval.accumulate()
+        cocoEval.summarize()
 
     def competition_mode(self, on):
         if on:

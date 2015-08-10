@@ -428,9 +428,10 @@ class imagenet(datasets.imdb):
         if use_salt:
             prefix += '{}_'.format(os.getpid())
 
+        # ILSVRC2014 devkit compares image index to val.txt indices
         print('Building reverse lookup table for ' + self._image_set + ' set')
         full_img_list = self._load_image_set_index()
-        index = dict( zip(full_img_list, xrange(len(full_img_list))) )
+        index = dict( zip(full_img_list, xrange(1, len(full_img_list)+1)) )
 
         # ILSVRC2014_devkit/results/44503_det_test_aeroplane.txt
         path = os.path.abspath(os.path.join(self._devkit_path, 'results',
@@ -446,11 +447,11 @@ class imagenet(datasets.imdb):
                     dets = all_boxes[cls_ind][im_ind]
                     if dets == []:
                         continue
-                    # the VOCdevkit expects 1-based indices (does the ilsvrc expect 1-based indices??)
+                    # the ILSVRC devkit expects 1-based indices
                     for k in xrange(dets.shape[0]):
                         # f.write('{:s} {:.3f} {:.1f} {:.1f} {:.1f} {:.1f}\n'.
                         f.write('{:d} {:d} {:.6f} {:.6f} {:.6f} {:.6f} {:.6f}\n'.
-                                format(index[image_name] + 1,
+                                format(index[image_name],
                                        cls_ind, dets[k, -1],
                                        dets[k, 0] + 1, dets[k, 1] + 1,
                                        dets[k, 2] + 1, dets[k, 3] + 1))
