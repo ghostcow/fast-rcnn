@@ -23,6 +23,13 @@ def _selective_search_IJCV_top_k(split, year, top_k):
     imdb.config['top_k'] = top_k
     return imdb
 
+# Set up coco_<split><year> using edgeboxes
+for year in ['2014']:
+    for split in ['train', 'val']:
+        name = 'coco_{}{}'.format(split, year)
+        __sets[name] = (lambda split=split, year=year:
+                datasets.coco(split, year))
+
 # Set up ILSVRC<year>_<split> using edgeboxes
 for year in ['2014']:
     for split in ['train', 'val']:

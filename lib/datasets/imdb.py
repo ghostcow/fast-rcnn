@@ -81,6 +81,9 @@ class imdb(object):
     def default_roidb(self):
         raise NotImplementedError
 
+#    def clean_imdb(self):
+#        raise NotImplementedError
+
     def evaluate_detections(self, all_boxes, output_dir=None):
         """
         all_boxes is a list of length number-of-classes.
@@ -92,6 +95,7 @@ class imdb(object):
         raise NotImplementedError
 
     def append_flipped_images(self):
+        # init roidb
         num_images = self.num_images
         widths = [PIL.Image.open(self.image_path_at(i)).size[0]
                   for i in xrange(num_images)]
@@ -164,7 +168,7 @@ class imdb(object):
             num_boxes = boxes.shape[0]
             overlaps = np.zeros((num_boxes, self.num_classes), dtype=np.float32)
 
-            if gt_roidb[i] is not None:
+            if gt_roidb is not None and gt_roidb[i] is not None:
                 gt_boxes = gt_roidb[i]['boxes']
                 gt_classes = gt_roidb[i]['gt_classes']
                 gt_overlaps = bbox_overlaps(boxes.astype(np.float),

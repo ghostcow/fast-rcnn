@@ -59,8 +59,8 @@ class coco(datasets.imdb):
         self._annotations = self._load_annotations()
         self._cat_id_to_class_index = self._load_category_ids()
         self._image_index = self._load_image_set_index()
-        self._image_to_id = dict(zip(self._load_image_ids_names()))
-        # Default to roidb handler
+        self._image_to_id = dict(zip(*self._load_image_ids_names()))
+        # Default to edgeboxes roidb handler, consider adding constructor param for this
         self._roidb_handler = self.edgeboxes_roidb
 
         # PASCAL specific config options
@@ -73,10 +73,15 @@ class coco(datasets.imdb):
         assert os.path.exists(self._data_path), \
                 'Path does not exist: {}'.format(self._data_path)
 
+        # clean image list from images with no gt or no proposals
+        self.clean_imdb()
+
+
     def image_path_at(self, i):
         """
         Return the absolute path to image i in the image sequence.
         """
+        # return os.path.abspath(os.path.join(self._image_path, self._image_index[i]))
         return os.path.join(self._image_path, self._image_index[i])
 
     def _load_annotations(self):
@@ -109,12 +114,6 @@ class coco(datasets.imdb):
         image_list = [image_info['file_name'] for image_info in image_infos]
         return image_list, image_ids
 
-    def _load_image_set_index(self):
-        image_list = self._load_image_ids_names()[0]
-        # sort to match matlab order
-        image_list.sort()
-        return image_list
-
     def _clean_list(self, lst, bad_indices):
 
         # in case manual indices need to be added
@@ -124,6 +123,22 @@ class coco(datasets.imdb):
         for j in reversed(bad_indices):
             del lst[j]
         return
+
+    # def _clean_list(self, lst, bad_indices):
+    #     """
+    #     alt. implementation that 'cleans' lists down to 1 item,
+    #     for debugging purposes.
+    #     """
+    #     n = len(lst)
+    #     for i in reversed(xrange(1,n)):
+    #         del lst[i]
+    #     return
+
+    def _load_image_set_index(self):
+        image_list = self._load_image_ids_names()[0]
+        # sort to match matlab order
+        image_list.sort()
+        return image_list
 
     def _get_default_path(self):
         """
@@ -136,6 +151,43 @@ class coco(datasets.imdb):
         Return the path where the train\val\test image set is (Ex: train2014)
         """
         return os.path.join(self._data_path, self._image_set_year)
+
+    def clean_imdb(self):
+        """
+        Clean image list and roidb from images with no gt or proposals
+        Update cache files accordingly.
+        :return:
+        """
+        bad_index_file = os.path.abspath(
+            os.path.join(self.cache_path, self._name + '_bad_indices.pkl'))
+
+        print("{} cleaning roidb and image list...".format(self._name))
+        # if cache file exists, that means that a clean roidb has been saved
+        if os.path.exists(bad_index_file):
+            with open(bad_index_file, 'rb') as f:
+                bad_indices = cPickle.load(f)
+                self._clean_list(self._image_index, bad_indices)
+        else:
+            gt_roidb = self.gt_roidb()
+            proposals_roidb = self.roidb
+
+            # clean image index and roidbs
+            bad_indices = self._clean_roidbs(gt_roidb, proposals_roidb)
+            self._clean_list(self._image_index, bad_indices)
+
+            # update cache and save index list
+            gt_file = os.path.join(self.cache_path,
+                          self.name + '_gt_roidb.pkl')
+            roidb_file = os.path.join(self.cache_path,
+                          self.name + '_roidb.pkl')
+            with open(bad_index_file, 'wb') as f:
+                cPickle.dump(bad_indices, f)
+            with open(gt_file, 'wb') as f:
+                cPickle.dump(gt_roidb, f, cPickle.HIGHEST_PROTOCOL)
+            with open(roidb_file, 'wb') as f:
+                cPickle.dump(proposals_roidb, f, cPickle.HIGHEST_PROTOCOL)
+        print("done.")
+        return
 
     def gt_roidb(self):
         """
@@ -158,6 +210,104 @@ class coco(datasets.imdb):
 
         return gt_roidb
 
+    def _load_image_info(self, image_path):
+        """
+        Load image and bounding boxes info from JSON file in the MSCOCO
+        format.
+
+        Bboxes are 0-indexed absolute coordinates, see issue:
+        https://github.com/pdollar/coco/issues/5#issuecomment-129899109
+        """
+        img_id = self._image_to_id[image_path]
+        ann_id = self._annotations.getAnnIds(img_id)
+        anns = self._annotations.loadAnns(ann_id)
+
+        num_objs = len(anns)
+        if num_objs == 0:
+            return None
+
+        boxes = np.zeros((num_objs, 4), dtype=np.uint16)
+        gt_classes = np.zeros((num_objs), dtype=np.int32)
+        overlaps = np.zeros((num_objs, self.num_classes), dtype=np.float32)
+
+        for ix, ann in enumerate(anns):
+            bb = ann['bbox']
+            # convert coco style bbox annotation to pixel coordinates
+            # dirty hack: some bounding boxes are less than a pixel wide
+            x, y, width, height = [bb[0], bb[1], bb[2], bb[3]]
+            x1, y1, x2, y2 = [x, y,
+                              x+width-min(1,width),
+                              y+height-min(1,height)]
+            # sanity check
+            assert x1 <= x2 and y1 <= y2
+            cls = self._cat_id_to_class_index[ann['category_id']]
+            boxes[ix, :] = [x1, y1, x2, y2]
+            gt_classes[ix] = cls
+            overlaps[ix, cls] = 1.0
+
+        overlaps = scipy.sparse.csr_matrix(overlaps)
+
+        return {'boxes' : boxes,
+                'gt_classes': gt_classes,
+                'gt_overlaps' : overlaps,
+                'flipped' : False}
+
+    def edgeboxes_roidb(self):
+        """
+        Return the database of edgeboxes regions of interest.
+        Ground-truth ROIs are also included.
+
+        Side effect: cleans self._image_index from images with no gt or proposals
+
+        This function loads/saves from/to a cache file to speed up future calls.
+        """
+        cache_file = os.path.join(self.cache_path,
+                                  self.name + '_roidb.pkl')
+
+        if os.path.exists(cache_file):
+            with open(cache_file, 'rb') as fid:
+                roidb = cPickle.load(fid)
+                print("{} loaded roidb from {}".format(self._name, cache_file))
+            return roidb
+
+        else:
+            if self._image_set != 'test':
+                gt_roidb = self.gt_roidb()
+            else:
+                gt_roidb = None
+
+            print('{} generating edgeboxes roidb'.format(self._name))
+            eb_roidb = self._load_edgeboxes_roidb(gt_roidb)
+            roidb = datasets.imdb.merge_roidbs(gt_roidb, eb_roidb)
+
+            with open(cache_file, 'wb') as fid:
+                cPickle.dump(roidb, fid, cPickle.HIGHEST_PROTOCOL)
+                print 'Wrote roidb to {}'.format(cache_file)
+
+            return roidb
+
+    def _load_edgeboxes_roidb(self, gt_roidb):
+        filename = os.path.abspath(os.path.join(self.cache_path, '..',
+                                                'edgeboxes_data',
+                                                self.name + '.mat'))
+        assert os.path.exists(filename), \
+                'Edgeboxes search data not found at: {}'.format(filename)
+
+        with h5py.File(filename, 'r') as f:
+            box_list=[]
+            for tmp_ref in f['boxes']:
+                # transpose and 0-index proposals
+                # because they are stored by matlab in hdf5 format
+                ref = tmp_ref[0]
+                boxes = f[ref].value.T - 1
+                # matlab stores empty boxes as shape (2,)
+                if boxes.shape == (2,):
+                    box_list.append(None)
+                else:
+                    box_list.append(boxes)
+
+        return self.create_roidb_from_box_list(box_list, gt_roidb)
+
     def _clean_roidbs(self, a, b):
         """
         Remove roi info of images with no proposals OR no gt boxes.
@@ -179,107 +329,6 @@ class coco(datasets.imdb):
 
         return bad_indices
 
-    def edgeboxes_roidb(self):
-        """
-        Return the database of edgeboxes regions of interest.
-        Ground-truth ROIs are also included.
-
-        Side effect: cleans self._image_index from images with no gt or proposals
-
-        This function loads/saves from/to a cache file to speed up future calls.
-        """
-        cache_file = os.path.join(self.cache_path,
-                                  self.name + '_edgeboxes_roidb.pkl')
-
-        if os.path.exists(cache_file):
-            with open(cache_file, 'rb') as fid:
-
-                roidb, bad_indices = cPickle.load(fid)
-                print("{} loaded clean roidb from {}.\nCleaning image list..."
-                      .format(self._name, cache_file))
-                self._clean_list(self._image_index, bad_indices)
-            return roidb
-
-        else:
-            if self._image_set != 'test':
-                gt_roidb = self.gt_roidb()
-            else:
-                gt_roidb = None
-
-            print('{} generating edgeboxes roidb'.format(self._name))
-            eb_roidb = self._load_edgeboxes_roidb(gt_roidb)
-
-            # clean bad indices off image index AND roidbs here
-            print("{} cleaning roidb and image list...".format(self._name))
-            bad_indices = self._clean_roidbs(gt_roidb, eb_roidb)
-            self._clean_list(self._image_index, bad_indices)
-
-            roidb = datasets.imdb.merge_roidbs(gt_roidb, eb_roidb)
-
-            with open(cache_file, 'wb') as fid:
-                cPickle.dump((roidb, bad_indices), fid, cPickle.HIGHEST_PROTOCOL)
-                print 'Wrote roidb to {}'.format(cache_file)
-
-            return roidb
-
-    def _load_edgeboxes_roidb(self, gt_roidb):
-        filename = os.path.abspath(os.path.join(self.cache_path, '..',
-                                                'edgeboxes_data',
-                                                self.name + '.mat'))
-        assert os.path.exists(filename), \
-                'Edgeboxes search data not found at: {}'.format(filename)
-
-
-        with h5py.File(filename, 'r') as f:
-            box_list=[]
-            for tmp_ref in f['boxes']:
-
-                ref = tmp_ref[0]
-                boxes = f[ref].value.T - 1
-                # matlab reshapes empty boxes as (2,)
-                if boxes.shape == (2,):
-                    box_list.append(None)
-                else:
-                    box_list.append(boxes)
-
-        return self.create_roidb_from_box_list(box_list, gt_roidb)
-
-    def _load_image_info(self, image_path):
-        """
-        Load image and bounding boxes info from JSON file in the MSCOCO
-        format.
-
-        Bboxes are 0-indexed already
-        """
-        img_id = self._image_to_id[image_path]
-        ann_id = self._annotations.getAnnIds(img_id)
-        anns = self._annotations.loadAnns(ann_id)
-
-        num_objs = len(anns)
-        if num_objs == 0:
-            return None
-
-        boxes = np.zeros((num_objs, 4), dtype=np.uint16)
-        gt_classes = np.zeros((num_objs), dtype=np.int32)
-        overlaps = np.zeros((num_objs, self.num_classes), dtype=np.float32)
-
-        for ix, ann in enumerate(anns):
-            bb = ann['bbox']
-            # convert (xmax,ymax,width,height) to (xmin,ymin,xmax,ymax)
-            x, y, width, height = [bb[0], bb[1], bb[2], bb[3]]
-            x1, y1, x2, y2 = [x, y, x+width-1, y+height-1]
-            cls = self._cat_id_to_class_index[ann['category_id']]
-            boxes[ix, :] = [x1, y1, x2, y2]
-            gt_classes[ix] = cls
-            overlaps[ix, cls] = 1.0
-
-        overlaps = scipy.sparse.csr_matrix(overlaps)
-
-        return {'boxes' : boxes,
-                'gt_classes': gt_classes,
-                'gt_overlaps' : overlaps,
-                'flipped' : False}
-
     def _write_coco_results_file(self, all_boxes):
         """
         Results must be written to file in JSON format.
@@ -296,7 +345,7 @@ class coco(datasets.imdb):
         use_salt = self.config['use_salt']
         prefix = 'instances_'
         if use_salt:
-            prefix += '{}_'.format(os.getpid())
+            prefix = '{}_{}'.format(os.getpid(), prefix)
 
         path = os.path.abspath(os.path.join(self._devkit_path, 'results',
                                             prefix))
@@ -310,18 +359,19 @@ class coco(datasets.imdb):
 
                     if cls == '__background__':
                         continue
-                    dets = all_boxes[cls_ind][im_ind]
+                    dets = all_boxes[cls_ind][im_ind].tolist()
                     if dets == []:
                         continue
 
                     image_id = self._image_to_id[image_name]
-                    cat_id = self._annotations.getCatIds(cls)
-                    for k in xrange(dets.shape[0]):
-                        x1,y1,x2,y2 = [dets[k, 0], dets[k, 1],
-                                       dets[k, 2], dets[k, 3]]
-                        x,y,width,height = [x1, y1, x2-x1+1, y2-y1+1]
+                    cat_id = self._annotations.getCatIds(cls)[0]
+                    for k in xrange(len(dets)):
+                        x1,y1,x2,y2 = [dets[k][0], dets[k][1],
+                                       dets[k][2], dets[k][3]]
+                        # convert back to coco style bbox annotation
+                        x,y,width,height = [x1-1, y1-1, x2-x1+1, y2-y1+1]
                         bbox = [x, y, width, height]
-                        score = dets[k, -1]
+                        score = dets[k][-1]
                         res = {'image_id' : image_id,
                                'category_id' : cat_id,
                                'bbox' : bbox,
@@ -351,6 +401,6 @@ class coco(datasets.imdb):
             self.config['cleanup'] = True
 
 if __name__ == '__main__':
-    d = datasets.pascal_voc('trainval', '2007')
+    d = datasets.coco('val', '2014')
     res = d.roidb
     from IPython import embed; embed()
