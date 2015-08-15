@@ -162,32 +162,24 @@ class coco(datasets.imdb):
             os.path.join(self.cache_path, self._name + '_bad_indices.pkl'))
 
         print("{} cleaning roidb and image list...".format(self._name))
-        # if cache file exists, that means that a clean roidb has been saved
-        if os.path.exists(bad_index_file):
-            with open(bad_index_file, 'rb') as f:
-                bad_indices = cPickle.load(f)
-                self._clean_list(self._image_index, bad_indices)
-        else:
-            gt_roidb = self.gt_roidb()
-            proposals_roidb = self.roidb
+        gt_roidb = self.gt_roidb()
+        proposals_roidb = self.roidb
 
-            # clean image index and roidbs
-            bad_indices = self._clean_roidbs(gt_roidb, proposals_roidb)
+        # fetching roidb generates the bad indices
+        with open(bad_index_file, 'rb') as f:
+            bad_indices = cPickle.load(f)
             self._clean_list(self._image_index, bad_indices)
 
-            # update cache and save index list
-            gt_file = os.path.join(self.cache_path,
-                          self.name + '_gt_roidb.pkl')
-            roidb_file = os.path.join(self.cache_path,
-                          self.name + '_roidb.pkl')
-            with open(bad_index_file, 'wb') as f:
-                cPickle.dump(bad_indices, f)
-            with open(gt_file, 'wb') as f:
-                cPickle.dump(gt_roidb, f, cPickle.HIGHEST_PROTOCOL)
-            with open(roidb_file, 'wb') as f:
-                cPickle.dump(proposals_roidb, f, cPickle.HIGHEST_PROTOCOL)
+        # update cache
+        gt_file = os.path.join(self.cache_path,
+                      self.name + '_gt_roidb.pkl')
+        roidb_file = os.path.join(self.cache_path,
+                      self.name + '_roidb.pkl')
+        with open(gt_file, 'wb') as f:
+            cPickle.dump(gt_roidb, f, cPickle.HIGHEST_PROTOCOL)
+        with open(roidb_file, 'wb') as f:
+            cPickle.dump(proposals_roidb, f, cPickle.HIGHEST_PROTOCOL)
         print("done.")
-        return
 
     def gt_roidb(self):
         """
@@ -268,7 +260,6 @@ class coco(datasets.imdb):
             with open(cache_file, 'rb') as fid:
                 roidb = cPickle.load(fid)
                 print("{} loaded roidb from {}".format(self._name, cache_file))
-            return roidb
 
         else:
             if self._image_set != 'test':
@@ -278,13 +269,19 @@ class coco(datasets.imdb):
 
             print('{} generating edgeboxes roidb'.format(self._name))
             eb_roidb = self._load_edgeboxes_roidb(gt_roidb)
-            roidb = datasets.imdb.merge_roidbs(gt_roidb, eb_roidb)
+            roidb, bad_indices = datasets.imdb.merge_roidbs(gt_roidb, eb_roidb)
+
+            bad_index_file = os.path.abspath(
+                os.path.join(self.cache_path, self._name + '_bad_indices.pkl'))
+            with open(bad_index_file, 'wb') as f:
+                cPickle.dump(bad_indices, f)
+                print 'Wrote bad index list to {}'.format(bad_index_file)
 
             with open(cache_file, 'wb') as fid:
                 cPickle.dump(roidb, fid, cPickle.HIGHEST_PROTOCOL)
                 print 'Wrote roidb to {}'.format(cache_file)
 
-            return roidb
+        return roidb
 
     def _load_edgeboxes_roidb(self, gt_roidb):
         filename = os.path.abspath(os.path.join(self.cache_path, '..',
@@ -307,27 +304,6 @@ class coco(datasets.imdb):
                     box_list.append(boxes)
 
         return self.create_roidb_from_box_list(box_list, gt_roidb)
-
-    def _clean_roidbs(self, a, b):
-        """
-        Remove roi info of images with no proposals OR no gt boxes.
-
-        Assume a or b are not None
-        """
-        if a and b:
-            assert len(a) == len(b)
-            bad_indices = [i for i in xrange(len(a)) if a[i] is None or b[i] is None]
-        elif a is None:
-            bad_indices = [i for i in xrange(len(b)) if b[i] is None]
-        elif b is None:
-            bad_indices = [i for i in xrange(len(a)) if a[i] is None]
-
-        if a:
-            self._clean_list(a,bad_indices)
-        if b:
-            self._clean_list(b,bad_indices)
-
-        return bad_indices
 
     def _write_coco_results_file(self, all_boxes):
         """

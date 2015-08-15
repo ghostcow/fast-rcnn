@@ -137,9 +137,7 @@ class imagenet(datasets.imdb):
                        'n04530566', 'n02062744', 'n04591713', 'n02391049')
         self._wnid_to_ind = dict(zip(self._wnids, xrange(self.num_classes)))
         self._class_to_ind = dict(zip(self.classes, xrange(self.num_classes)))
-        # self._image_ext = '.jpg'
         self._image_ext = '.JPEG'
-        # self._image_index = self._load_image_set_index()
         self._image_index = self._load_image_set_index()
         # Default to roidb handler
         self._roidb_handler = self.edgeboxes_roidb
@@ -154,6 +152,8 @@ class imagenet(datasets.imdb):
                 'VOCdevkit path does not exist: {}'.format(self._devkit_path)
         assert os.path.exists(self._data_path), \
                 'Path does not exist: {}'.format(self._data_path)
+        # clean imdb
+        self.clean_imdb()
 
     def image_path_at(self, i):
         """
@@ -163,14 +163,13 @@ class imagenet(datasets.imdb):
 
     def _load_image_list(self):
         """
-        enumerate picture list relative to image path
-        assuming images are at most one level deep
+        Enumerate picture list relative to image path.
+        Assuming images are at most one level deep.
 
-        loads from cache to speed things up
+        Loads from cache to speed things up.
         """
         cache_file = os.path.join(self.cache_path,
                                   self._name + '_image_list.pkl')
-
         if os.path.exists(cache_file):
             with open(cache_file, 'rb') as f:
                 image_list = cPickle.load(f)
@@ -178,7 +177,6 @@ class imagenet(datasets.imdb):
         else:
             image_list = []
             for root,_,files in os.walk(self._image_path):
-
                 folder = '' if (root == self._image_path) else os.path.basename(root)
                 images = [os.path.join(folder,file) for file in files]
                 image_list.extend(images)
@@ -189,22 +187,12 @@ class imagenet(datasets.imdb):
         return image_list
 
     def _load_image_set_index(self):
-
         image_list = self._load_image_list()
         # sort to match matlab order
         image_list.sort()
         return image_list
 
     def _clean_list(self, lst, bad_indices):
-
-        # don't change orig list
-        bad_indices = list(bad_indices)
-
-        # clean also images found to have bad bbox indices from train
-        if self._image_set == 'train':
-            bad_indices.append(167283)
-            bad_indices.sort()
-
         for j in reversed(bad_indices):
             del lst[j]
         return
@@ -221,6 +209,60 @@ class imagenet(datasets.imdb):
         """
         return os.path.join(self._data_path, 'images', self._image_set)
 
+    def clean_imdb(self):
+        """
+        Clean image list and roidb from images with no gt or proposals.
+
+        This function uses a cache to speed up it's calls.
+        :return:
+        """
+        gt_file = os.path.abspath(
+            os.path.join(self.cache_path, self.name + '_gt_roidb.pkl'))
+        prop_file = os.path.abspath(
+            os.path.join(self.cache_path, self.name + '_roidb.pkl'))
+        bad_index_file = os.path.abspath(
+            os.path.join(self.cache_path, self._name + '_bad_indices.pkl'))
+
+        print("{} cleaning imdb...".format(self.name))
+        if os.path.exists(bad_index_file):
+            with open(bad_index_file, 'rb') as f:
+                bad_indices = cPickle.load(f)
+            if self._image_set != 'test':
+                gt_roidb = self.gt_roidb()
+                self._clean_list(gt_roidb, bad_indices)
+            prop_roidb = self.roidb
+            self._clean_list(prop_roidb, bad_indices)
+            self._clean_list(self._image_index, bad_indices)
+            print("done.")
+            return
+
+        # check for bad indices in roidbs
+        if self._image_set != 'test':
+            gt_roidb = self.gt_roidb()
+            prop_roidb = self.roidb
+            assert len(gt_roidb) == len(prop_roidb)
+            bad_indices = [i for i in xrange(len(gt_roidb))
+                           if gt_roidb[i] is None or prop_roidb[i] is None]
+            self._clean_list(gt_roidb, bad_indices)
+            self._clean_list(prop_roidb, bad_indices)
+            # update gt_roidb cache
+            with open(gt_file, 'wb') as f:
+                cPickle.dump(gt_roidb, f, cPickle.HIGHEST_PROTOCOL)
+        else:
+            prop_roidb = self.roidb
+            bad_indices = [i for i in xrange(len(prop_roidb)) if prop_roidb[i] is None]
+            self._clean_list(prop_roidb,bad_indices)
+
+        # finish cleaning
+        self._clean_list(self._image_index, bad_indices)
+
+        # update rest of cache
+        with open(prop_file, 'wb') as f:
+            cPickle.dump(prop_roidb, f, cPickle.HIGHEST_PROTOCOL)
+        with open(bad_index_file, 'wb') as f:
+            cPickle.dump(bad_indices, f)
+        print("done.")
+
     def gt_roidb(self):
         """
         Return the database of ground-truth regions of interest.
@@ -230,15 +272,15 @@ class imagenet(datasets.imdb):
         cache_file = os.path.join(self.cache_path, self.name + '_gt_roidb.pkl')
         if os.path.exists(cache_file):
             with open(cache_file, 'rb') as fid:
-                roidb = cPickle.load(fid)
+                gt_roidb = cPickle.load(fid)
             print '{} gt roidb loaded from {}'.format(self.name, cache_file)
-            return roidb
+            return gt_roidb
 
-        gt_roidb = [self._load_pascal_annotation(image)
+        gt_roidb = [self._load_ilsvrc_annotation(image)
                     for image in self.image_index]
         with open(cache_file, 'wb') as fid:
             cPickle.dump(gt_roidb, fid, cPickle.HIGHEST_PROTOCOL)
-        print 'wrote gt roidb to {}'.format(cache_file)
+        print 'Wrote gt roidb to {}'.format(cache_file)
 
         return gt_roidb
 
@@ -270,28 +312,6 @@ class imagenet(datasets.imdb):
 
         return roidb
 
-    def _clean_roidbs(self, a, b):
-        """
-        remove roi info of images
-        with no proposals OR no gt boxes.
-
-        assume a or b are not None
-        """
-        if a and b:
-            assert len(a) == len(b)
-            bad_indices = [i for i in xrange(len(a)) if a[i] is None or b[i] is None]
-        elif a is None:
-            bad_indices = [i for i in xrange(len(b)) if b[i] is None]
-        elif b is None:
-            bad_indices = [i for i in xrange(len(a)) if a[i] is None]
-
-        if a:
-            self._clean_list(a,bad_indices)
-        if b:
-            self._clean_list(b,bad_indices)
-
-        return bad_indices
-
     def edgeboxes_roidb(self):
         """
         Return the database of edgeboxes regions of interest.
@@ -302,37 +322,26 @@ class imagenet(datasets.imdb):
         This function loads/saves from/to a cache file to speed up future calls.
         """
         cache_file = os.path.join(self.cache_path,
-                                  self.name + '_edgeboxes_roidb.pkl')
+                                  self.name + '_roidb.pkl')
 
         if os.path.exists(cache_file):
             with open(cache_file, 'rb') as fid:
+                roidb = cPickle.load(fid)
+                print("{} loaded roidb from {}".format(self._name, cache_file))
+                return roidb
 
-                roidb, bad_indices = cPickle.load(fid)
-                print("{} loaded clean roidb from {}.\nCleaning image list...".format(self._name, cache_file))
-                self._clean_list(self._image_index, bad_indices)
-            return roidb
-
-        else:
-            if self._image_set != 'test':
-                gt_roidb = self.gt_roidb()
-            else:
-                gt_roidb = None
-
-            print('{} generating edgeboxes roidb'.format(self._name))
+        print('{} generating edgeboxes roidb'.format(self._name))
+        if self._image_set != 'test':
+            gt_roidb = self.gt_roidb()
             eb_roidb = self._load_edgeboxes_roidb(gt_roidb)
-
-            # clean bad indices off image index AND roidbs here
-            print("{} cleaning roidb and image list...".format(self._name))
-            bad_indices = self._clean_roidbs(gt_roidb, eb_roidb)
-            self._clean_list(self._image_index, bad_indices)
-
             roidb = datasets.imdb.merge_roidbs(gt_roidb, eb_roidb)
+        else:
+            roidb = self._load_edgeboxes_roidb(None)
+        with open(cache_file, 'wb') as fid:
+            cPickle.dump(roidb, fid, cPickle.HIGHEST_PROTOCOL)
+        print 'Wrote roidb to {}'.format(cache_file)
 
-            with open(cache_file, 'wb') as fid:
-                cPickle.dump((roidb, bad_indices), fid, cPickle.HIGHEST_PROTOCOL)
-                print 'Wrote roidb to {}'.format(cache_file)
-
-            return roidb
+        return roidb
 
     def _load_edgeboxes_roidb(self, gt_roidb):
         filename = os.path.abspath(os.path.join(self.cache_path, '..',
@@ -341,11 +350,9 @@ class imagenet(datasets.imdb):
         assert os.path.exists(filename), \
                 'Edgeboxes search data not found at: {}'.format(filename)
 
-
         with h5py.File(filename, 'r') as f:
             box_list=[]
             for tmp_ref in f['boxes']:
-
                 ref = tmp_ref[0]
                 boxes = f[ref].value.T - 1
                 # matlab reshapes empty boxes as (2,)
@@ -370,50 +377,58 @@ class imagenet(datasets.imdb):
 
         return self.create_roidb_from_box_list(box_list, gt_roidb)
 
-    def _load_pascal_annotation(self, image_path):
+    def _load_ilsvrc_annotation(self, image_path):
         """
         Load image and bounding boxes info from XML file in the PASCAL VOC
         format.
         """
-
-        # filename = os.path.join(self._data_path, 'Annotations', index + '.xml')
         filename = os.path.join(self._data_path, 'bbox',
                                 self._image_set,
                                 os.path.splitext(image_path)[0] + '.xml')
 
         if not os.path.exists(filename):
-            num_objs = 0
+            return None
         else:
-            # print 'Loading: {}'.format(filename)
             def get_data_from_tag(node, tag):
                 return node.getElementsByTagName(tag)[0].childNodes[0].data
 
             with open(filename) as f:
                 data = minidom.parseString(f.read())
-
             objs = data.getElementsByTagName('object')
-            num_objs = len(objs)
+            num_objs = self._count_objects_in_xml(objs, get_data_from_tag)
+            height,width = self._get_size_from_xml(data, get_data_from_tag)
 
-        # don't create info if no objects in the image
-        if num_objs == 0:
-            return None
+            # don't create info if no objects in the image
+            if num_objs == 0:
+                return None
 
         boxes = np.zeros((num_objs, 4), dtype=np.uint16)
         gt_classes = np.zeros((num_objs), dtype=np.int32)
         overlaps = np.zeros((num_objs, self.num_classes), dtype=np.float32)
 
         # Load object bounding boxes into a data frame.
-        for ix, obj in enumerate(objs):
+        ix = 0
+        for obj in objs:
             # ILSVRC pixels are already 0-based (hrmph)
             x1 = float(get_data_from_tag(obj, 'xmin'))
             y1 = float(get_data_from_tag(obj, 'ymin'))
             x2 = float(get_data_from_tag(obj, 'xmax'))
             y2 = float(get_data_from_tag(obj, 'ymax'))
+            # skip bad boxes
+            if x1>x2 or y1>y2:
+                continue
+            # correct about 1000 bboxes with invalid edge indices
+            if x2 == width:
+                x2 -= 1
+            if y2 == height:
+                y2 -= 1
             cls = self._wnid_to_ind[
                     str(get_data_from_tag(obj, "name")).lower().strip()]
             boxes[ix, :] = [x1, y1, x2, y2]
             gt_classes[ix] = cls
             overlaps[ix, cls] = 1.0
+            # update object index
+            ix += 1
 
         overlaps = scipy.sparse.csr_matrix(overlaps)
 
@@ -421,6 +436,24 @@ class imagenet(datasets.imdb):
                 'gt_classes': gt_classes,
                 'gt_overlaps' : overlaps,
                 'flipped' : False}
+
+    def _count_objects_in_xml(self, objs, get_data_from_tag):
+        count=0
+        for ix, obj in enumerate(objs):
+            # ILSVRC pixels are already 0-based (hrmph)
+            x1 = float(get_data_from_tag(obj, 'xmin'))
+            y1 = float(get_data_from_tag(obj, 'ymin'))
+            x2 = float(get_data_from_tag(obj, 'xmax'))
+            y2 = float(get_data_from_tag(obj, 'ymax'))
+            if x1<=x2 and y1<=y2:
+                count += 1
+        return count
+
+    def _get_size_from_xml(self, data, get_data_from_tag):
+        s = data.getElementsByTagName('size')[0]
+        height = float(get_data_from_tag(s, 'height'))
+        width = float(get_data_from_tag(s, 'width'))
+        return height, width
 
     def _write_voc_results_file(self, all_boxes):
         use_salt = self.config['use_salt']
@@ -449,7 +482,6 @@ class imagenet(datasets.imdb):
                         continue
                     # the ILSVRC devkit expects 1-based indices
                     for k in xrange(dets.shape[0]):
-                        # f.write('{:s} {:.3f} {:.1f} {:.1f} {:.1f} {:.1f}\n'.
                         f.write('{:d} {:d} {:.6f} {:.6f} {:.6f} {:.6f} {:.6f}\n'.
                                 format(index[image_name],
                                        cls_ind, dets[k, -1],
@@ -469,9 +501,6 @@ class imagenet(datasets.imdb):
         cmd = 'cd {} && '.format(path)
         cmd += '{:s} -nodisplay -nodesktop '.format(datasets.MATLAB)
         cmd += '-r "dbstop if error; '
-        # cmd += 'voc_eval(\'{:s}\',\'{:s}\',\'{:s}\',\'{:s}\',{:d}); quit;"' \
-               # .format(self._devkit_path, prefix,
-               #         self._image_set, output_dir, int(rm_results))
         cmd += 'evaluate_frcn(\'{:s}\', \'{:s}\', \'{:s}\'); quit;"' \
                 .format(filename, gt_dir, cache_filepath)
         print('Running:\n{}'.format(cmd))
@@ -479,7 +508,7 @@ class imagenet(datasets.imdb):
 
     def evaluate_detections(self, all_boxes, output_dir=None):
         filename = self._write_voc_results_file(all_boxes)
-        self._do_matlab_eval(filename) #, output_dir)
+        self._do_matlab_eval(filename)
 
     def competition_mode(self, on):
         if on:

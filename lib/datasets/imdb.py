@@ -81,9 +81,6 @@ class imdb(object):
     def default_roidb(self):
         raise NotImplementedError
 
-#    def clean_imdb(self):
-#        raise NotImplementedError
-
     def evaluate_detections(self, all_boxes, output_dir=None):
         """
         all_boxes is a list of length number-of-classes.
@@ -95,7 +92,6 @@ class imdb(object):
         raise NotImplementedError
 
     def append_flipped_images(self):
-        # init roidb
         num_images = self.num_images
         widths = [PIL.Image.open(self.image_path_at(i)).size[0]
                   for i in xrange(num_images)]
@@ -164,7 +160,6 @@ class imdb(object):
             if boxes is None:
                 roidb.append(None)
                 continue
-
             num_boxes = boxes.shape[0]
             overlaps = np.zeros((num_boxes, self.num_classes), dtype=np.float32)
 
@@ -172,8 +167,7 @@ class imdb(object):
                 gt_boxes = gt_roidb[i]['boxes']
                 gt_classes = gt_roidb[i]['gt_classes']
                 gt_overlaps = bbox_overlaps(boxes.astype(np.float),
-                                        gt_boxes.astype(np.float))
-
+                                            gt_boxes.astype(np.float))
                 argmaxes = gt_overlaps.argmax(axis=1)
                 maxes = gt_overlaps.max(axis=1)
                 I = np.where(maxes > 0)[0]
@@ -192,18 +186,8 @@ class imdb(object):
         assert len(a) == len(b)
         for i in xrange(len(a)):
 
-            if not a[i] and b[i]:
-                a[i] = b[i]
+            if a[i] is None or b[i] is None:
                 continue
-
-            elif a[i] and not b[i]:
-                continue
-
-            # an image must at least have either gt boxes or proposals
-            elif not a[i] and not b[i]:
-                print('Error: a[i] and b[i] are both None!')
-                print('i=' + str(i))
-
             a[i]['boxes'] = np.vstack((a[i]['boxes'], b[i]['boxes']))
             a[i]['gt_classes'] = np.hstack((a[i]['gt_classes'],
                                             b[i]['gt_classes']))
