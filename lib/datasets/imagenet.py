@@ -192,11 +192,6 @@ class imagenet(datasets.imdb):
         image_list.sort()
         return image_list
 
-    def _clean_list(self, lst, bad_indices):
-        for j in reversed(bad_indices):
-            del lst[j]
-        return
-
     def _get_default_path(self):
         """
         Return the default path where PASCAL VOC is expected to be installed. ILSVRC2014_devkit
@@ -208,58 +203,6 @@ class imagenet(datasets.imdb):
         Return the path where the train\val\test image set is
         """
         return os.path.join(self._data_path, 'images', self._image_set)
-
-    def clean_imdb(self):
-        """
-        Clean image list and roidb from images with no gt or proposals.
-
-        This function uses a cache to speed up it's calls.
-        :return:
-        """
-        gt_file = os.path.abspath(
-            os.path.join(self.cache_path, self.name + '_gt_roidb.pkl'))
-        proposals_file = os.path.abspath(
-            os.path.join(self.cache_path, self.name + '_roidb.pkl'))
-        bad_index_file = os.path.abspath(
-            os.path.join(self.cache_path, self._name + '_bad_indices.pkl'))
-
-        print("{} cleaning imdb...".format(self.name))
-        if os.path.exists(bad_index_file):
-            if not os.path.exists(gt_file) or not os.path.exists(proposals_file):
-                print("{} ERROR: bad indices found but no cached roidb. "
-                      "Delete {} and try again.".format(self.name, bad_index_file))
-            with open(bad_index_file, 'rb') as f:
-                bad_indices = cPickle.load(f)
-            self._clean_list(self._image_index, bad_indices)
-            print("done.")
-            return
-
-        # check for bad indices in roidbs
-        if self._image_set != 'test':
-            gt_roidb = self.gt_roidb()
-            proposals_roidb = self.roidb
-            assert len(gt_roidb) == len(proposals_roidb)
-            bad_indices = [i for i in xrange(len(gt_roidb))
-                           if gt_roidb[i] is None or proposals_roidb[i] is None]
-            self._clean_list(gt_roidb, bad_indices)
-            self._clean_list(proposals_roidb, bad_indices)
-            # update gt_roidb cache
-            with open(gt_file, 'wb') as f:
-                cPickle.dump(gt_roidb, f, cPickle.HIGHEST_PROTOCOL)
-        else:
-            proposals_roidb = self.roidb
-            bad_indices = [i for i in xrange(len(proposals_roidb)) if proposals_roidb[i] is None]
-            self._clean_list(proposals_roidb,bad_indices)
-
-        # finish cleaning
-        self._clean_list(self._image_index, bad_indices)
-
-        # update rest of cache
-        with open(proposals_file, 'wb') as f:
-            cPickle.dump(proposals_roidb, f, cPickle.HIGHEST_PROTOCOL)
-        with open(bad_index_file, 'wb') as f:
-            cPickle.dump(bad_indices, f)
-        print("done.")
 
     def gt_roidb(self):
         """

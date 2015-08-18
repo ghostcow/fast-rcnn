@@ -114,16 +114,6 @@ class coco(datasets.imdb):
         image_list = [image_info['file_name'] for image_info in image_infos]
         return image_list, image_ids
 
-    def _clean_list(self, lst, bad_indices):
-
-        # in case manual indices need to be added
-        # don't change orig list
-        #bad_indices = list(bad_indices)
-
-        for j in reversed(bad_indices):
-            del lst[j]
-        return
-
     # def _clean_list(self, lst, bad_indices):
     #     """
     #     alt. implementation that 'cleans' lists down to 1 item,
@@ -152,35 +142,6 @@ class coco(datasets.imdb):
         """
         return os.path.join(self._data_path, self._image_set_year)
 
-    def clean_imdb(self):
-        """
-        Clean image list and roidb from images with no gt or proposals
-        Update cache files accordingly.
-        :return:
-        """
-        bad_index_file = os.path.abspath(
-            os.path.join(self.cache_path, self._name + '_bad_indices.pkl'))
-
-        print("{} cleaning roidb and image list...".format(self._name))
-        gt_roidb = self.gt_roidb()
-        proposals_roidb = self.roidb
-
-        # fetching roidb generates the bad indices
-        with open(bad_index_file, 'rb') as f:
-            bad_indices = cPickle.load(f)
-            self._clean_list(self._image_index, bad_indices)
-
-        # update cache
-        gt_file = os.path.join(self.cache_path,
-                      self.name + '_gt_roidb.pkl')
-        roidb_file = os.path.join(self.cache_path,
-                      self.name + '_roidb.pkl')
-        with open(gt_file, 'wb') as f:
-            cPickle.dump(gt_roidb, f, cPickle.HIGHEST_PROTOCOL)
-        with open(roidb_file, 'wb') as f:
-            cPickle.dump(proposals_roidb, f, cPickle.HIGHEST_PROTOCOL)
-        print("done.")
-
     def gt_roidb(self):
         """
         Return the database of ground-truth regions of interest.
@@ -190,15 +151,15 @@ class coco(datasets.imdb):
         cache_file = os.path.join(self.cache_path, self.name + '_gt_roidb.pkl')
         if os.path.exists(cache_file):
             with open(cache_file, 'rb') as fid:
-                roidb = cPickle.load(fid)
+                gt_roidb = cPickle.load(fid)
             print '{} gt roidb loaded from {}'.format(self.name, cache_file)
-            return roidb
+            return gt_roidb
 
         gt_roidb = [self._load_image_info(image)
                     for image in self.image_index]
         with open(cache_file, 'wb') as fid:
             cPickle.dump(gt_roidb, fid, cPickle.HIGHEST_PROTOCOL)
-        print 'wrote gt roidb to {}'.format(cache_file)
+        print 'Wrote gt roidb to {}'.format(cache_file)
 
         return gt_roidb
 
@@ -260,26 +221,18 @@ class coco(datasets.imdb):
             with open(cache_file, 'rb') as fid:
                 roidb = cPickle.load(fid)
                 print("{} loaded roidb from {}".format(self._name, cache_file))
+                return roidb
 
-        else:
-            if self._image_set != 'test':
-                gt_roidb = self.gt_roidb()
-            else:
-                gt_roidb = None
-
-            print('{} generating edgeboxes roidb'.format(self._name))
+        print('{} generating edgeboxes roidb'.format(self._name))
+        if self._image_set != 'test':
+            gt_roidb = self.gt_roidb()
             eb_roidb = self._load_edgeboxes_roidb(gt_roidb)
-            roidb, bad_indices = datasets.imdb.merge_roidbs(gt_roidb, eb_roidb)
-
-            bad_index_file = os.path.abspath(
-                os.path.join(self.cache_path, self._name + '_bad_indices.pkl'))
-            with open(bad_index_file, 'wb') as f:
-                cPickle.dump(bad_indices, f)
-                print 'Wrote bad index list to {}'.format(bad_index_file)
-
-            with open(cache_file, 'wb') as fid:
-                cPickle.dump(roidb, fid, cPickle.HIGHEST_PROTOCOL)
-                print 'Wrote roidb to {}'.format(cache_file)
+            roidb = datasets.imdb.merge_roidbs(gt_roidb, eb_roidb)
+        else:
+            roidb = self._load_edgeboxes_roidb(None)
+        with open(cache_file, 'wb') as fid:
+            cPickle.dump(roidb, fid, cPickle.HIGHEST_PROTOCOL)
+        print 'Wrote roidb to {}'.format(cache_file)
 
         return roidb
 
