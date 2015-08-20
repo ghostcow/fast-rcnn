@@ -288,7 +288,7 @@ class coco(datasets.imdb):
 
                     if cls == '__background__':
                         continue
-                    dets = all_boxes[cls_ind][im_ind].tolist()
+                    dets = [det.tolist() for det in all_boxes[cls_ind][im_ind]]
                     if dets == []:
                         continue
 

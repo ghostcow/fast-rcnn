@@ -10,12 +10,10 @@ exec &> >(tee -a "$LOG")
 echo Logging output to "$LOG"
 
 time ./tools/train_net.py --gpu 0 \
-	--solver models/VGG16/solver.prototxt \
+	--solver models/VGG16/ILSVRC2014/solver.prototxt \
 	--weights output/default/ILSVRC2014_train/vgg16_fast_rcnn_iter_120000.caffemodel \
-	--iters 60000
-#	--weights data/imagenet_models/VGG16.v2.caffemodel
-#	--iters 200000
+	--iters 330000
 
-time ./tools/test_net.py --def models/VGG16/test.prototxt \
+time ./tools/test_net.py --def models/VGG16/ILSVRC2014/test.prototxt \
 	--imdb ILSVRC2014_val  \
-	--net output/default/ILSVRC2014_train/vgg16_fast_rcnn_iter_60000.caffemodel
+	--net output/default/ILSVRC2014_train/vgg16_fast_rcnn_iter_330000.caffemodel
