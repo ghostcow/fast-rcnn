@@ -1,3 +1,29 @@
+TO TRAIN AND EVALUATE IMAGENET WITH FRCN
+
+0. make sure caffe is compiled with cudnn (otherwise net with vgg-16 won't fit in memory)
+
+1. link to your imagenet devkit in data dir
+
+2. inside devkit, link to bounding box and images dir as 'bbox' and 'images' respectfully
+
+3. bbox and images must contain all annotations and images of the imagenet DET challenge in the following way:
+	- images/test contains test set images, images/train contains train set images, images/val contains validation set images
+	- in train set dir, all tars must be extracted into dirs with the same name i.e.:
+	ILSVRC2013_train.tar -> images/train/ILSVRC2013_train
+	ILSVRC2014_train_0006.tar -> images/train/ILSVRC2014_train_0006
+	n01443537.tar -> images/train/n01443537
+
+4. proposals: I used edgeboxes matlab script to generate proposals for the net, but my code accepts any matlab proposals that are in the correct format.
+	the format:
+	- each image set must have their own .mat file
+	- the .mat file containing the proposals must be saved in HDF5 "-v7.3" format, and must contain two variables:
+		- "images": a sorted list of cells of the N set images
+		- "boxes": a sorted list of N cells, each containing a K_n-by-4 matrix representing a list of K_n proposals for image n, sorted by score.
+		
+5. MATLAB wrapper function for evaluation- I wrote a wrapper for the evaluation process. It can be found at https://drive.google.com/open?id=0B5IjvS8bP14Id29sVVJsNWlpdGM
+download and place it into your devkit, in the 'evaluation' dir.
+
+
 # *Fast* R-CNN: Fast Region-based Convolutional Networks for object detection
 
 Created by Ross Girshick at Microsoft Research, Redmond.
